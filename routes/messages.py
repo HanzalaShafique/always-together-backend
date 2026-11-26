@@ -1,7 +1,7 @@
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Response
 from bson import ObjectId
-from services.database import get_messages, get_conversations, get_fcm_tokens
+from services.database import get_messages, get_conversations, get_fcm_tokens, get_media
 from services.translation_service import translate_text
 from services.notification_service import send_push
 from services.ws_manager import manager
@@ -14,6 +14,46 @@ router = APIRouter(prefix="/messages", tags=["messages"])
 def _s(doc):
     doc["_id"] = str(doc["_id"])
     return doc
+
+
+@router.post("/upload-media")
+async def upload_media(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 15MB)")
+
+    media = get_media()
+    doc = {
+        "uploader_id": current_user["_id"],
+        "content_type": file.content_type or "image/jpeg",
+        "filename": file.filename or "media",
+        "data": data,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    }
+    result = await media.insert_one(doc)
+    media_id = str(result.inserted_id)
+    url = f"https://always-together-backend.onrender.com/messages/media/{media_id}"
+    return {"url": url, "media_id": media_id}
+
+
+@router.get("/media/{media_id}")
+async def get_chat_media(media_id: str):
+    media = get_media()
+    try:
+        oid = ObjectId(media_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid media ID")
+
+    doc = await media.find_one({"_id": oid})
+    if not doc or "data" not in doc:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    content_type = doc.get("content_type", "image/jpeg")
+    return Response(
+        content=doc["data"],
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=2592000"},
+    )
 
 
 @router.get("/{conversation_id}")
@@ -173,6 +213,13 @@ async def translate_message(message_id: str, lang: str = "en",
     msg = await msgs.find_one({"_id": ObjectId(message_id)})
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
+    if msg.get("type") != "text":
+        return {
+            "translated": msg.get("content", ""),
+            "original": msg.get("content", ""),
+            "detected_lang": "",
+            "target_lang": lang,
+        }
     result = translate_text(msg.get("content", ""), lang)
     return {
         "translated": result.get("translated", ""),

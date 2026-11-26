@@ -14,6 +14,7 @@ def get_users(): return get_db()["users"]
 def get_messages(): return get_db()["messages"]
 def get_conversations(): return get_db()["conversations"]
 def get_fcm_tokens(): return get_db()["fcm_tokens"]
+def get_media(): return get_db()["chat_media"]
 
 async def connect_db():
     global client
