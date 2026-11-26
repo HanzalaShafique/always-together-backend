@@ -31,8 +31,9 @@ async def get_current_user(authorization: str = Header(...)):
 
 @router.post("/register")
 async def register(req: RegisterRequest):
-    # Validate tag format
-    tag = req.tag if req.tag.startswith("@") else f"@{req.tag}"
+    # Normalize tag format (strip extra leading @)
+    clean = re.sub(r"^@+", "", req.tag.strip())
+    tag = f"@{clean}"
     if not TAG_PATTERN.match(tag):
         raise HTTPException(status_code=400, detail="Invalid tag format. Use @letters_numbers (3-20 chars)")
 
@@ -72,11 +73,8 @@ async def register(req: RegisterRequest):
 async def login(req: LoginRequest):
     users = get_users()
     tag_or_email = req.tag_or_email.strip()
-    # Try tag first, then email
-    if tag_or_email.startswith("@"):
-        user = await users.find_one({"tag": tag_or_email})
-    else:
-        user = await users.find_one({"$or": [{"email": tag_or_email}, {"tag": f"@{tag_or_email}"}]})
+    clean_tag = f"@{re.sub(r'^@+', '', tag_or_email)}"
+    user = await users.find_one({"$or": [{"email": tag_or_email}, {"tag": clean_tag}]})
 
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -97,7 +95,8 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 
 @router.get("/check-tag")
 async def check_tag(tag: str):
-    normalized = tag if tag.startswith("@") else f"@{tag}"
+    clean = re.sub(r"^@+", "", tag.strip())
+    normalized = f"@{clean}"
     if not TAG_PATTERN.match(normalized):
         return {"available": False, "reason": "Invalid format"}
     users = get_users()

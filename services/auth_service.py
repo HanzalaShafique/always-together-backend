@@ -1,21 +1,31 @@
 import os
+import bcrypt
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from fastapi import HTTPException, status
 
 JWT_SECRET = os.getenv("JWT_SECRET", "always_together_super_secret_change_in_production")
 ALGORITHM = "HS256"
 EXPIRE_HOURS = 24 * 30  # 30 days
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-def hash_password(p: str) -> str: return pwd_context.hash(p)
-def verify_password(plain: str, hashed: str) -> bool: return pwd_context.verify(plain, hashed)
+def hash_password(p: str) -> str:
+    pwd_bytes = p.encode("utf-8")[:72]
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8")[:72], hashed.encode("utf-8"))
+    except Exception:
+        return False
+
 
 def create_token(user_id: str, tag: str) -> str:
     exp = datetime.utcnow() + timedelta(hours=EXPIRE_HOURS)
     return jwt.encode({"sub": user_id, "tag": tag, "exp": exp}, JWT_SECRET, algorithm=ALGORITHM)
+
 
 def decode_token(token: str) -> dict:
     try:
