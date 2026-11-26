@@ -24,6 +24,14 @@ async def call_offer(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Forward a WebRTC offer to the target user via WebSocket."""
+    from services.database import get_users
+    from bson import ObjectId
+    users = get_users()
+    if ObjectId.is_valid(payload.to_user_id):
+        target = await users.find_one({"_id": ObjectId(payload.to_user_id)})
+        if target and str(current_user["_id"]) in target.get("blocked_users", []):
+            raise HTTPException(status_code=403, detail="User is not accepting calls from you")
+
     manager = _get_ws_manager()
     event = {
         "type": "webrtc_offer",

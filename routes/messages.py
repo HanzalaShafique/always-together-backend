@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Response
 from bson import ObjectId
 from services.database import get_messages, get_conversations, get_fcm_tokens, get_media
@@ -17,23 +17,36 @@ def _s(doc):
 
 
 @router.post("/upload-media")
-async def upload_media(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+async def upload_media(file: UploadFile = File(...), is_document: bool = False, current_user: dict = Depends(get_current_user)):
     data = await file.read()
-    if len(data) > 15 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File too large (max 15MB)")
+    if len(data) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 25MB)")
 
     media = get_media()
+    expires_at = None
+    if is_document:
+        expires_at = (datetime.utcnow() + timedelta(days=7)).isoformat() + "Z"
+
     doc = {
         "uploader_id": current_user["_id"],
-        "content_type": file.content_type or "image/jpeg",
+        "content_type": file.content_type or "application/octet-stream",
         "filename": file.filename or "media",
+        "file_size": len(data),
+        "is_document": is_document,
+        "expires_at": expires_at,
         "data": data,
         "created_at": datetime.utcnow().isoformat() + "Z",
     }
     result = await media.insert_one(doc)
     media_id = str(result.inserted_id)
     url = f"https://always-together-backend.onrender.com/messages/media/{media_id}"
-    return {"url": url, "media_id": media_id}
+    return {
+        "url": url,
+        "media_id": media_id,
+        "file_name": file.filename or "media",
+        "file_size": len(data),
+        "expires_at": expires_at,
+    }
 
 
 @router.get("/media/{media_id}")
@@ -48,11 +61,22 @@ async def get_chat_media(media_id: str):
     if not doc or "data" not in doc:
         raise HTTPException(status_code=404, detail="Media not found")
 
-    content_type = doc.get("content_type", "image/jpeg")
+    # Check 7-day document expiration
+    if doc.get("expires_at"):
+        now_iso = datetime.utcnow().isoformat() + "Z"
+        if doc["expires_at"] <= now_iso:
+            raise HTTPException(status_code=410, detail="Document has expired (7-day limit)")
+
+    content_type = doc.get("content_type", "application/octet-stream")
+    filename = doc.get("filename", "file")
+    headers = {
+        "Cache-Control": "public, max-age=2592000",
+        "Content-Disposition": f'inline; filename="{filename}"',
+    }
     return Response(
         content=doc["data"],
         media_type=content_type,
-        headers={"Cache-Control": "public, max-age=2592000"},
+        headers=headers,
     )
 
 
@@ -61,8 +85,16 @@ async def get_messages_route(conversation_id: str, page: int = 1,
                               current_user: dict = Depends(get_current_user)):
     msgs = get_messages()
     skip = (page - 1) * 30
+    now_iso = datetime.utcnow().isoformat() + "Z"
     cursor = msgs.find(
-        {"conversation_id": conversation_id, "is_deleted": {"$ne": True}},
+        {
+            "conversation_id": conversation_id,
+            "is_deleted": {"$ne": True},
+            "$or": [
+                {"expires_at": None},
+                {"expires_at": {"$gt": now_iso}}
+            ]
+        },
     ).sort("created_at", -1).skip(skip).limit(30)
     results = []
     async for m in cursor:
@@ -72,7 +104,24 @@ async def get_messages_route(conversation_id: str, page: int = 1,
 
 @router.post("/send")
 async def send_message(req: SendMessageRequest, current_user: dict = Depends(get_current_user)):
+    convs = get_conversations()
+    conv = await convs.find_one({"_id": ObjectId(req.conversation_id)})
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    from services.database import get_users
+    users = get_users()
+    for uid in conv.get("participants", []):
+        if uid != current_user["_id"] and ObjectId.is_valid(uid):
+            other = await users.find_one({"_id": ObjectId(uid)})
+            if other and current_user["_id"] in other.get("blocked_users", []):
+                raise HTTPException(status_code=403, detail="You cannot send messages to this user (blocked)")
+
     now = datetime.utcnow().isoformat() + "Z"
+    expires_at = None
+    if req.type == "document":
+        expires_at = (datetime.utcnow() + timedelta(days=7)).isoformat() + "Z"
+
     doc = {
         "conversation_id": req.conversation_id,
         "sender_id": current_user["_id"],
@@ -84,6 +133,9 @@ async def send_message(req: SendMessageRequest, current_user: dict = Depends(get
         "reply_to_content": req.reply_to_content,
         "reply_to_sender": req.reply_to_sender,
         "caption": req.caption,
+        "file_name": req.file_name,
+        "file_size": req.file_size,
+        "expires_at": expires_at,
         "reactions": [],
         "created_at": now,
         "deleted_at": None,
@@ -97,7 +149,12 @@ async def send_message(req: SendMessageRequest, current_user: dict = Depends(get
     msg_doc = _s(msg_doc)
 
     # Update conversation last message
-    last_msg = req.caption if (req.type == "image" and req.caption) else req.content
+    if req.type == "image" and req.caption:
+        last_msg = req.caption
+    elif req.type == "document":
+        last_msg = req.file_name or "Document"
+    else:
+        last_msg = req.content
     convs = get_conversations()
     await convs.update_one(
         {"_id": ObjectId(req.conversation_id)},

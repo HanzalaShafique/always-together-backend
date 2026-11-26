@@ -91,3 +91,26 @@ async def create_conversation(req: CreateConversationRequest, current_user: dict
     result = await convs.insert_one(doc)
     created = await convs.find_one({"_id": result.inserted_id})
     return await _enrich_conversation(created, my_id)
+
+
+@router.delete("/{conversation_id}")
+async def delete_conversation(conversation_id: str, current_user: dict = Depends(get_current_user)):
+    convs = get_conversations()
+    if not ObjectId.is_valid(conversation_id):
+        raise HTTPException(status_code=400, detail="Invalid conversation id")
+    
+    conv = await convs.find_one({"_id": ObjectId(conversation_id)})
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    my_id = current_user["_id"]
+    if my_id not in conv.get("participants", []):
+        raise HTTPException(status_code=403, detail="Not authorized to delete this conversation")
+    
+    # Delete all messages in this conversation
+    msgs = get_messages()
+    await msgs.delete_many({"conversation_id": conversation_id})
+    
+    # Delete the conversation
+    await convs.delete_one({"_id": ObjectId(conversation_id)})
+    return {"message": "Conversation deleted successfully", "conversation_id": conversation_id}

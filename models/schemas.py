@@ -24,6 +24,8 @@ class SendMessageRequest(BaseModel):
     reply_to_content: Optional[str] = None
     reply_to_sender: Optional[str] = None
     caption: Optional[str] = None
+    file_name: Optional[str] = None
+    file_size: Optional[int] = None
 
 class ReactRequest(BaseModel):
     emoji: str

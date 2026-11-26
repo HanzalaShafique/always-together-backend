@@ -43,6 +43,44 @@ async def search_users(tag: str, current_user: dict = Depends(get_current_user))
     return results
 
 
+@router.get("/blocked")
+async def get_blocked_users(current_user: dict = Depends(get_current_user)):
+    users = get_users()
+    me = await users.find_one({"_id": ObjectId(current_user["_id"])})
+    blocked_ids = (me or {}).get("blocked_users", [])
+    if not blocked_ids:
+        return []
+
+    blocked_oids = [ObjectId(bid) for bid in blocked_ids if ObjectId.is_valid(bid)]
+    cursor = users.find({"_id": {"$in": blocked_oids}}, {"password_hash": 0, "avatar_data": 0})
+    results = []
+    async for u in cursor:
+        results.append(_s(u))
+    return results
+
+
+@router.post("/block/{user_id}")
+async def block_user(user_id: str, current_user: dict = Depends(get_current_user)):
+    if user_id == current_user["_id"]:
+        raise HTTPException(status_code=400, detail="Cannot block yourself")
+    users = get_users()
+    await users.update_one(
+        {"_id": ObjectId(current_user["_id"])},
+        {"$addToSet": {"blocked_users": user_id}}
+    )
+    return {"message": "User blocked successfully", "blocked_user_id": user_id}
+
+
+@router.post("/unblock/{user_id}")
+async def unblock_user(user_id: str, current_user: dict = Depends(get_current_user)):
+    users = get_users()
+    await users.update_one(
+        {"_id": ObjectId(current_user["_id"])},
+        {"$pull": {"blocked_users": user_id}}
+    )
+    return {"message": "User unblocked successfully", "unblocked_user_id": user_id}
+
+
 @router.get("/{tag}")
 async def get_user(tag: str, current_user: dict = Depends(get_current_user)):
     users = get_users()
