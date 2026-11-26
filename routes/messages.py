@@ -32,7 +32,7 @@ async def get_messages_route(conversation_id: str, page: int = 1,
 
 @router.post("/send")
 async def send_message(req: SendMessageRequest, current_user: dict = Depends(get_current_user)):
-    now = datetime.utcnow().isoformat()
+    now = datetime.utcnow().isoformat() + "Z"
     doc = {
         "conversation_id": req.conversation_id,
         "sender_id": current_user["_id"],
@@ -173,8 +173,13 @@ async def translate_message(message_id: str, lang: str = "en",
     msg = await msgs.find_one({"_id": ObjectId(message_id)})
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
-    translated = translate_text(msg.get("content", ""), lang)
-    return {"translated": translated, "original": msg.get("content", ""), "lang": lang}
+    result = translate_text(msg.get("content", ""), lang)
+    return {
+        "translated": result.get("translated", ""),
+        "original": msg.get("content", ""),
+        "detected_lang": result.get("detected_lang", ""),
+        "target_lang": result.get("target_lang", lang),
+    }
 
 
 @router.post("/{conversation_id}/seen")
