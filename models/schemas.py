@@ -23,6 +23,7 @@ class SendMessageRequest(BaseModel):
     reply_to_id: Optional[str] = None
     reply_to_content: Optional[str] = None
     reply_to_sender: Optional[str] = None
+    caption: Optional[str] = None
 
 class ReactRequest(BaseModel):
     emoji: str

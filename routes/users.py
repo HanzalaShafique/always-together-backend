@@ -19,14 +19,21 @@ def _s(doc):
 
 @router.get("/search")
 async def search_users(tag: str, current_user: dict = Depends(get_current_user)):
-    """Search users by @tag prefix — returns up to 20 suggestions."""
-    query = tag if tag.startswith("@") else f"@{tag}"
-    safe_query = re.escape(query)
+    """Search users by @tag or display name prefix — returns up to 20 suggestions."""
+    clean = tag.strip().lstrip("@")
+    safe_query = re.escape(clean)
     users = get_users()
     cursor = users.find(
         {
-            "tag": {"$regex": f"^{safe_query}", "$options": "i"},
-            "_id": {"$ne": ObjectId(current_user["_id"])},
+            "$and": [
+                {"_id": {"$ne": ObjectId(current_user["_id"])}},
+                {
+                    "$or": [
+                        {"tag": {"$regex": safe_query, "$options": "i"}},
+                        {"display_name": {"$regex": safe_query, "$options": "i"}},
+                    ]
+                },
+            ]
         },
         {"password_hash": 0, "avatar_data": 0},
     ).limit(20)

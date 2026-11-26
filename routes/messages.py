@@ -83,6 +83,7 @@ async def send_message(req: SendMessageRequest, current_user: dict = Depends(get
         "reply_to_id": req.reply_to_id,
         "reply_to_content": req.reply_to_content,
         "reply_to_sender": req.reply_to_sender,
+        "caption": req.caption,
         "reactions": [],
         "created_at": now,
         "deleted_at": None,
@@ -96,10 +97,11 @@ async def send_message(req: SendMessageRequest, current_user: dict = Depends(get
     msg_doc = _s(msg_doc)
 
     # Update conversation last message
+    last_msg = req.caption if (req.type == "image" and req.caption) else req.content
     convs = get_conversations()
     await convs.update_one(
         {"_id": ObjectId(req.conversation_id)},
-        {"$set": {"last_message": req.content, "last_message_type": req.type,
+        {"$set": {"last_message": last_msg, "last_message_type": req.type,
                   "last_message_at": now, "last_message_sender_id": current_user["_id"],
                   "updated_at": now}}
     )

@@ -13,6 +13,8 @@ TAG_PATTERN = re.compile(r"^@[a-zA-Z0-9_]{3,20}$")
 
 def _serialize(doc: dict) -> dict:
     doc["_id"] = str(doc["_id"])
+    doc.pop("avatar_data", None)
+    doc.pop("password_hash", None)
     return doc
 
 
@@ -23,7 +25,7 @@ async def get_current_user(authorization: str = Header(...)):
     payload = decode_token(token)
     user_id = payload.get("sub")
     users = get_users()
-    user = await users.find_one({"_id": ObjectId(user_id)})
+    user = await users.find_one({"_id": ObjectId(user_id)}, {"password_hash": 0, "avatar_data": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return _serialize(user)
